@@ -1,0 +1,97 @@
+import random
+import time
+
+# --------- CLASSE SINGLETON (só pode ter 1 instância) ----------
+class Labirinto:
+    _instance = None
+
+    def __new__(cls, largura=10, altura=10):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.largura = largura
+            cls._instance.altura = altura
+        return cls._instance
+
+    def gerar_mapa(self, dificuldade=0):
+        # cria matriz cheia de paredes
+        mapa = [["#" for _ in range(self.largura)] for _ in range(self.altura)]
+
+        # gera caminhos aleatórios (menos parede com dificuldade maior)
+        for i in range(1, self.altura - 1):
+            for j in range(1, self.largura - 1):
+                mapa[i][j] = " " if random.random() > 0.3 - (dificuldade * 0.05) else "#"
+
+        # define entrada e saída
+        mapa[1][1] = "E"
+        mapa[self.altura - 2][self.largura - 2] = "X"
+        return mapa
+
+
+# --------- JOGO ----------
+class Jogo:
+    def __init__(self, mapas=3):
+        self.qtd_mapas = mapas
+        self.labirinto = Labirinto(12, 12)  # única instância
+        self.mapa = None
+        self.pos = [1, 1]
+        self.tempo_inicio = None
+        self.tempo_fim = None
+
+    def exibir_mapa(self):
+        for i, linha in enumerate(self.mapa):
+            for j, celula in enumerate(linha):
+                if [i, j] == self.pos:
+                    print("P", end=" ")
+                else:
+                    print(celula, end=" ")
+            print()
+        print()
+
+    def jogar(self):
+        print("=== LABIRINTO ===")
+        print("W = cima | A = esquerda | S = baixo | D = direita")
+        print(f"Você precisa vencer {self.qtd_mapas} mapas!\n")
+
+        # começa cronômetro
+        self.tempo_inicio = time.time()
+
+        for fase in range(1, self.qtd_mapas + 1):
+            print(f"\n--- MAPA {fase}/{self.qtd_mapas} ---\n")
+            self.mapa = self.labirinto.gerar_mapa(dificuldade=fase)
+            self.pos = [1, 1]
+
+            while True:
+                self.exibir_mapa()
+                move = input("Movimento (WASD): ").upper()
+
+                nova_pos = self.pos.copy()
+                if move == "W":   nova_pos[0] -= 1
+                elif move == "S": nova_pos[0] += 1
+                elif move == "A": nova_pos[1] -= 1
+                elif move == "D": nova_pos[1] += 1
+                else:
+                    print("Movimento inválido!")
+                    continue
+
+                # parede
+                if self.mapa[nova_pos[0]][nova_pos[1]] == "#":
+                    print("Parede!")
+                else:
+                    self.pos = nova_pos
+
+                # saída
+                if self.mapa[self.pos[0]][self.pos[1]] == "X":
+                    print("Saída encontrada!")
+                    break
+
+        # fim do jogo
+        self.tempo_fim = time.time()
+        duracao = round(self.tempo_fim - self.tempo_inicio, 2)
+        print(f"\nParabéns, você venceu todos os {self.qtd_mapas} mapas!")
+        print(f"Tempo total: {duracao} segundos.")
+
+
+# --------- EXECUÇÃO ---------
+if __name__ == "__main__":
+    jogo = Jogo(mapas=3)
+    jogo.jogar()
