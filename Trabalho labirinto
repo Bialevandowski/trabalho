@@ -1,97 +1,156 @@
 import random
+import threading
 import time
 
-# --------- CLASSE SINGLETON (só pode ter 1 instância) ----------
-class Labirinto:
+class MazeGenerator:
     _instance = None
-
-    def __new__(cls, largura=10, altura=10):
+    def __new__(cls, largura=11, altura=11):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.largura = largura
             cls._instance.altura = altura
         return cls._instance
-
     def gerar_mapa(self, dificuldade=0):
-        # cria matriz cheia de paredes
-        mapa = [["#" for _ in range(self.largura)] for _ in range(self.altura)]
+        w = self.largura if self.largura % 2 == 1 else self.largura + 1
+        h = self.altura if self.altura % 2 == 1 else self.altura + 1
+        maze = [["#" for _ in range(w)] for _ in range(h)]
+        def carve(cx, cy):
+            dirs = [(0, -2), (0, 2), (-2, 0), (2, 0)]
+            random.shuffle(dirs)
+            for dx, dy in dirs:
+                nx, ny = cx + dx, cy + dy
+                if 1 <= nx < h - 1 and 1 <= ny < w - 1 and maze[nx][ny] == "#":
+                    maze[nx][ny] = " "
+                    maze[cx + dx // 2][cy + dy // 2] = " "
+                    carve(nx, ny)
+        maze[1][1] = " "
+        carve(1, 1)
+        entrada = (1, 1)
+        saida = (h - 2, w - 2)
+        maze[entrada[0]][entrada[1]] = "E"
+        maze[saida[0]][saida[1]] = "X"
+        added_walls_pct = min(0.12 + dificuldade * 0.06, 0.5)
+        candidates = [(i, j) for i in range(1, h - 1) for j in range(1, w - 1)
+                      if maze[i][j] == " " and (i, j) not in (entrada, saida)]
+        random.shuffle(candidates)
+        to_add = int(len(candidates) * added_walls_pct)
+        for (i, j) in candidates[:to_add]:
+            wall_count = sum(1 for di, dj in [(-1,0),(1,0),(0,-1),(0,1)] if maze[i+di][j+dj] == "#")
+            if wall_count >= 2:
+                maze[i][j] = "#"
+        return maze
 
-        # gera caminhos aleatórios (menos parede com dificuldade maior)
-        for i in range(1, self.altura - 1):
-            for j in range(1, self.largura - 1):
-                mapa[i][j] = " " if random.random() > 0.3 - (dificuldade * 0.05) else "#"
+class GameTimer:
+    def __init__(self):
+        self._start_time = None
+        self._elapsed = 0.0
+        self._running = False
+        self._lock = threading.Lock()
+        self._thread = None
+    def _run(self):
+        last = time.time()
+        while self._running:
+            time.sleep(0.2)
+            now = time.time()
+            with self._lock:
+                self._elapsed += now - last
+            last = now
+    def start(self):
+        if not self._running:
+            with self._lock:
+                self._start_time = time.time()
+                self._elapsed = 0.0
+                self._running = True
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+    def stop(self):
+        if self._running:
+            self._running = False
+            if self._thread:
+                self._thread.join(timeout=0.5)
+    def elapsed(self):
+        with self._lock:
+            return self._elapsed
 
-        # define entrada e saída
-        mapa[1][1] = "E"
-        mapa[self.altura - 2][self.largura - 2] = "X"
-        return mapa
-
-
-# --------- JOGO ----------
-class Jogo:
-    def __init__(self, mapas=3):
-        self.qtd_mapas = mapas
-        self.labirinto = Labirinto(12, 12)  # única instância
-        self.mapa = None
-        self.pos = [1, 1]
-        self.tempo_inicio = None
-        self.tempo_fim = None
-
+class LabirintoGame:
+    def __init__(self, mapas=3, largura=21, altura=21):
+        self.total_mapas = max(1, mapas)
+        self.current_map = 0
+        self.largura = largura
+        self.altura = altura
+        self.generator = MazeGenerator(largura=self.largura, altura=self.altura)
+        self.player_pos = (1, 1)
+        self.mapa = []
+        self.timer = GameTimer()
+        self.partida_começou = False
     def exibir_mapa(self):
-        for i, linha in enumerate(self.mapa):
-            for j, celula in enumerate(linha):
-                if [i, j] == self.pos:
-                    print("P", end=" ")
+        display = []
+        for i, row in enumerate(self.mapa):
+            row_chars = []
+            for j, c in enumerate(row):
+                if (i, j) == self.player_pos:
+                    row_chars.append("P")
                 else:
-                    print(celula, end=" ")
-            print()
+                    row_chars.append(c)
+            display.append(" ".join(row_chars))
+        tempo = self.timer.elapsed() if self.partida_começou else 0.0
+        print(f"\nMapa {self.current_map}/{self.total_mapas}   Tempo: {tempo:.1f}s")
+        print("\n".join(display))
         print()
-
+    def iniciar_mapa(self, dificuldade):
+        self.mapa = self.generator.gerar_mapa(dificuldade=dificuldade)
+        for i, row in enumerate(self.mapa):
+            for j, c in enumerate(row):
+                if c == "E":
+                    self.player_pos = (i, j)
+                    return
+    def mover(self, direção):
+        i, j = self.player_pos
+        direção = direção.upper()
+        if direção == "W": ni, nj = i - 1, j
+        elif direção == "S": ni, nj = i + 1, j
+        elif direção == "A": ni, nj = i, j - 1
+        elif direção == "D": ni, nj = i, j + 1
+        else: return False, "Comando inválido"
+        if not (0 <= ni < len(self.mapa) and 0 <= nj < len(self.mapa[0])):
+            return False, "Limite"
+        if self.mapa[ni][nj] == "#":
+            return False, "Parede"
+        self.player_pos = (ni, nj)
+        return True, "Movimentou"
+    def check_saida(self):
+        i, j = self.player_pos
+        return self.mapa[i][j] == "X"
     def jogar(self):
-        print("=== LABIRINTO ===")
-        print("W = cima | A = esquerda | S = baixo | D = direita")
-        print(f"Você precisa vencer {self.qtd_mapas} mapas!\n")
-
-        # começa cronômetro
-        self.tempo_inicio = time.time()
-
-        for fase in range(1, self.qtd_mapas + 1):
-            print(f"\n--- MAPA {fase}/{self.qtd_mapas} ---\n")
-            self.mapa = self.labirinto.gerar_mapa(dificuldade=fase)
-            self.pos = [1, 1]
-
+        print("=== JOGO DO LABIRINTO ===")
+        print("Use W, A, S, D. Chegue em 'X'.")
+        self.timer.start()
+        self.partida_começou = True
+        while self.current_map < self.total_mapas:
+            self.current_map += 1
+            dificuldade = self.current_map - 1
+            self.iniciar_mapa(dificuldade=dificuldade)
             while True:
                 self.exibir_mapa()
-                move = input("Movimento (WASD): ").upper()
-
-                nova_pos = self.pos.copy()
-                if move == "W":   nova_pos[0] -= 1
-                elif move == "S": nova_pos[0] += 1
-                elif move == "A": nova_pos[1] -= 1
-                elif move == "D": nova_pos[1] += 1
-                else:
-                    print("Movimento inválido!")
-                    continue
-
-                # parede
-                if self.mapa[nova_pos[0]][nova_pos[1]] == "#":
-                    print("Parede!")
-                else:
-                    self.pos = nova_pos
-
-                # saída
-                if self.mapa[self.pos[0]][self.pos[1]] == "X":
-                    print("Saída encontrada!")
+                cmd = input("Movimento (W/A/S/D) ou Q: ").strip().upper()
+                if cmd == "Q":
+                    print("Saiu do jogo.")
+                    self.timer.stop()
+                    return
+                ok, msg = self.mover(cmd)
+                if not ok: print(msg)
+                if self.check_saida():
+                    print("Saída encontrada!\n")
+                    time.sleep(0.5)
                     break
+        self.timer.stop()
+        tempo_total = self.timer.elapsed()
+        print("Parabéns, você venceu todos os mapas!")
+        print(f"Tempo total: {tempo_total:.2f} segundos.")
 
-        # fim do jogo
-        self.tempo_fim = time.time()
-        duracao = round(self.tempo_fim - self.tempo_inicio, 2)
-        print(f"\nParabéns, você venceu todos os {self.qtd_mapas} mapas!")
-        print(f"Tempo total: {duracao} segundos.")
-
-
-# --------- EXECUÇÃO ---------
-if __name__ == "__main__":
-    jogo = Jogo(mapas=3)
+def main():
+    jogo = LabirintoGame(mapas=3, largura=21, altura=21)
     jogo.jogar()
+
+if __name__ == "__main__":
+    main()
